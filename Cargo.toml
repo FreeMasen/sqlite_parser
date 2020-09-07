@@ -1,5 +1,5 @@
 [package]
-name = "sql-parser"
+name = "sqlite-parser"
 version = "0.1.0"
 authors = ["rfm <r@robertmasen.pizza>"]
 edition = "2018"
