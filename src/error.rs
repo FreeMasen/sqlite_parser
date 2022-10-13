@@ -12,8 +12,14 @@ pub enum Error {
     /// An error parsing the maximum/ payload fraction
     /// or leaf fraction
     InvalidFraction(String),
-    /// The change counter failed to parse
-    InvalidChangeCounter(String),
+    /// An invalid u32 was found
+    InvalidU32(String),
+    /// An invalid i32 was found
+    InvalidI32(String),
+    /// Encountered a 0 when NonZero was expected
+    UnexpectedZero(String),
+    /// Encountered a non-zero when zero was expected
+    UnexpectedNonZero(String),
 }
 
 impl std::fmt::Display for Error {
@@ -30,7 +36,10 @@ impl std::fmt::Display for Error {
             // For our new case, we are just
             // going to print the inner message
             Self::InvalidFraction(msg) => write!(f, "{}", msg),
-            Self::InvalidChangeCounter(msg) => write!(f, "Invalid change counter: {}", msg),
+            Self::InvalidU32(msg) => write!(f, "Invalid u32: {}", msg),
+            Self::InvalidI32(msg) => write!(f, "Invalid i32: {}", msg),
+            Self::UnexpectedZero(what) => write!(f, "Expected non-zero value for {}", what),
+            Self::UnexpectedNonZero(what) => write!(f, "Expected zero value for {}", what),
         }
     }
 }
