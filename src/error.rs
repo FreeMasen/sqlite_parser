@@ -20,6 +20,9 @@ pub enum Error {
     UnexpectedZero(String),
     /// Encountered a non-zero when zero was expected
     UnexpectedNonZero(String),
+    /// The operating system encountered an error when
+    /// attempting to read the sqlite file
+    IoError(std::io::Error, &'static str),
 }
 
 impl std::fmt::Display for Error {
@@ -33,13 +36,12 @@ impl std::fmt::Display for Error {
                 v
             ),
             Self::InvalidPageSize(msg) => write!(f, "Invalid page size, {}", msg),
-            // For our new case, we are just
-            // going to print the inner message
             Self::InvalidFraction(msg) => write!(f, "{}", msg),
             Self::InvalidU32(msg) => write!(f, "Invalid u32: {}", msg),
             Self::InvalidI32(msg) => write!(f, "Invalid i32: {}", msg),
             Self::UnexpectedZero(what) => write!(f, "Expected non-zero value for {}", what),
             Self::UnexpectedNonZero(what) => write!(f, "Expected zero value for {}", what),
+            Self::IoError(inner, what) => write!(f, "Io Error parsing {}: {}", what, inner),
         }
     }
 }

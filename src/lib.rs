@@ -2,45 +2,68 @@
 pub mod error;
 pub mod header;
 
+use std::io::{Error as IoError, Read};
+
 pub use error::Error;
 pub use header::parse_header;
 
-// A little strange but since this might end up being
-// used in a large number of places, we can use a
-// String in the error position of our result. This
-// will allow the caller to insert their own error
-// with the more context.
-fn try_parse_u32(bytes: &[u8], name: &str) -> Result<u32, Error> {
-    use std::convert::TryInto;
-    // Just like with our u16, we are going to need to convert
-    // a slice into an array of 4 bytes. Using the `try_into`
-    // method on a slice, we will fail if the slice isn't exactly
-    // 4 bytes. We can use `map_err` to build our string only if
-    // it fails
-    let arr: [u8; 4] = bytes.try_into().map_err(|_| {
-        Error::InvalidU32(format!(
-            "expected a 4 byte slice, found a {} byte slice for {}",
-            bytes.len(),
-            name
-        ))
-    })?;
-    // Finally we use the `from_be_bytes` constructor for a u32
-    Ok(u32::from_be_bytes(arr))
+fn read_u32(reader: &mut impl Read, name: &'static str) -> Result<u32, Error> {
+    read(reader).map_err(|e| Error::IoError(e, name))
 }
-fn try_parse_i32(bytes: &[u8], name: &str) -> Result<i32, Error> {
-    use std::convert::TryInto;
-    // Just like with our u16, we are going to need to convert
-    // a slice into an array of 4 bytes. Using the `try_into`
-    // method on a slice, we will fail if the slice isn't exactly
-    // 4 bytes. We can use `map_err` to build our string only if
-    // it fails
-    let arr: [u8; 4] = bytes.try_into().map_err(|_| {
-        Error::InvalidU32(format!(
-            "expected a 4 byte slice, found a {} byte slice for {}",
-            bytes.len(),
-            name
-        ))
-    })?;
-    // Finally we use the `from_be_bytes` constructor for a u32
-    Ok(i32::from_be_bytes(arr))
+fn read_i32(reader: &mut impl Read, name: &'static str) -> Result<i32, Error> {
+    read(reader).map_err(|e| Error::IoError(e, name))
 }
+
+fn read_u16(reader: &mut impl Read, name: &'static str) -> Result<u16, Error> {
+    read(reader).map_err(|e| Error::IoError(e, name))
+}
+
+fn read_u8(reader: &mut impl Read, name: &'static str) -> Result<u8, Error> {
+    read(reader).map_err(|e| Error::IoError(e, name))
+}
+
+/// Read the number of bytes needed to construct T with the `FromBigEndian`
+/// implementation for T
+fn read<T, const N: usize>(reader: &mut impl Read) -> Result<T, IoError>
+where
+    T: FromBigEndian<N>,
+{
+    let bytes = read_bytes(reader)?;
+    Ok(T::from_be_bytes(bytes))
+}
+
+/// Read `N` bytes from the provided reader into a new array
+fn read_bytes<const N: usize>(reader: &mut impl Read) -> Result<[u8; N], IoError> {
+    let mut ret = [0u8; N];
+    reader.read_exact(&mut ret)?;
+    Ok(ret)
+}
+
+/// A trait to unify the behavior or the primitive number types
+/// which all provide a constructor named `from_be_bytes` which
+/// that an array of `u8`s of the appropriate size.
+///
+/// This trait leverages the const generic N to define the size of the
+/// array needed to construct that type
+pub trait FromBigEndian<const N: usize>: Sized {
+    fn from_be_bytes(bytes: [u8; N]) -> Self;
+}
+
+macro_rules! impl_from_big_endian {
+    ($t:ty, $n:expr) => {
+        impl FromBigEndian<$n> for $t {
+            fn from_be_bytes(bytes: [u8; $n]) -> Self {
+                <$t>::from_be_bytes(bytes)
+            }
+        }
+    };
+    ($t:ty) => {
+        impl_from_big_endian!($t, { std::mem::size_of::<$t>() });
+    };
+}
+
+impl_from_big_endian!(u32);
+impl_from_big_endian!(i32);
+impl_from_big_endian!(u16);
+impl_from_big_endian!(i16);
+impl_from_big_endian!(u8);

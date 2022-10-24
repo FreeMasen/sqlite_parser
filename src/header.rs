@@ -2,7 +2,7 @@
 use crate::error::Error;
 use std::{
     convert::{TryFrom, TryInto},
-    num::NonZeroU32,
+    num::NonZeroU32, io::Read,
 };
 
 /// The magic string at the start of all Sqlite3 database files is
@@ -39,39 +39,38 @@ pub struct DatabaseHeader {
     pub library_write_version: u32,
 }
 
-pub fn parse_header(bytes: &[u8]) -> Result<DatabaseHeader, Error> {
-    validate_header_string(&bytes[0..16])?;
-    let page_size = parse_page_size(&bytes[16..18])?;
-    let write_version = FormatVersion::from(bytes[18]);
-    let read_version = FormatVersion::from(bytes[19]);
-    let reserved_bytes = bytes[20];
-    validate_fraction(bytes[21], 64, "Maximum payload fraction")?;
-    validate_fraction(bytes[22], 32, "Minimum payload fraction")?;
-    validate_fraction(bytes[23], 32, "Leaf fraction")?;
-    let change_counter = crate::try_parse_u32(&bytes[24..28], "change counter")?;
-    let database_size = crate::try_parse_u32(&bytes[28..32], "")
+pub fn parse_header(reader: &mut impl Read) -> Result<DatabaseHeader, Error> {
+    validate_header_string(reader)?;
+    let page_size = parse_page_size(reader)?;
+    let write_version = crate::read_u8(reader, "write version")?.into();
+    let read_version = crate::read_u8(reader, "read version")?.into();
+    let reserved_bytes = crate::read_u8(reader, "reserved bytes length")?;
+    validate_fraction(reader, 64, "Maximum payload fraction")?;
+    validate_fraction(reader, 32, "Minimum payload fraction")?;
+    validate_fraction(reader, 32, "Leaf fraction")?;
+    let change_counter = crate::read_u32(reader, "change counter")?;
+    let database_size = crate::read_u32(reader, "database size")
         .map(NonZeroU32::new)
         .ok()
         .flatten();
-    let first_free_page = crate::try_parse_u32(&bytes[32..36], "first free page")?;
-    let free_page_len = crate::try_parse_u32(&bytes[36..40], "free page list length")?;
+    let first_free_page = crate::read_u32(reader, "first free page")?;
+    let free_page_len = crate::read_u32(reader, "free page list length")?;
     let free_page_list_info = FreePageListInfo::new(first_free_page, free_page_len);
-    let schema_cookie = crate::try_parse_u32(&bytes[40..44], "schema cookie")?;
-    let raw_schema_version = crate::try_parse_u32(&bytes[44..48], "schema format version")?;
+    let schema_cookie = crate::read_u32(reader, "schema cookie")?;
+    let raw_schema_version = crate::read_u32(reader, "schema format version")?;
     let schema_version = SchemaVersion::try_from(raw_schema_version)?;
-    let cache_size = crate::try_parse_u32(&bytes[48..52], "cache size")?;
-    let raw_vacuum = crate::try_parse_u32(&bytes[52..56], "auto vacuum")?;
+    let cache_size = crate::read_u32(reader, "cache size")?;
+    let raw_vacuum = crate::read_u32(reader, "auto vacuum")?;
     let vacuum_setting = VacuumSetting::full(raw_vacuum);
-    let raw_text_enc = crate::try_parse_u32(&bytes[56..60], "text encoding")?;
+    let raw_text_enc = crate::read_u32(reader, "text encoding")?;
     let text_encoding = TextEncoding::try_from(raw_text_enc)?;
-    let user_version = crate::try_parse_i32(&bytes[60..64], "user version")?;
-    let application_id = crate::try_parse_u32(&bytes[64..68], "application id")?;
-    validate_reserved_zeros(&bytes[68..92])
+    let user_version = crate::read_i32(reader, "user version")?;
+    let application_id = crate::read_u32(reader, "application id")?;
+    validate_reserved_zeros(reader)
         .map_err(|e| eprintln!("{}", e))
         .ok();
-    // new!
-    let version_valid_for = crate::try_parse_u32(&bytes[92..96], "version valid for")?;
-    let library_write_version = crate::try_parse_u32(&bytes[96..100], "library write version")?;
+    let version_valid_for = crate::read_u32(reader, "version valid for")?;
+    let library_write_version = crate::read_u32(reader, "library write version")?;
     Ok(DatabaseHeader {
         page_size,
         write_version,
@@ -94,8 +93,10 @@ pub fn parse_header(bytes: &[u8]) -> Result<DatabaseHeader, Error> {
 
 /// Validate that the bytes provided match the special string
 /// at the start of Sqlite3 files
-pub fn validate_header_string(bytes: &[u8]) -> Result<(), Error> {
-    let buf = &bytes[0..16];
+pub fn validate_header_string(reader: &mut impl Read) -> Result<(), Error> {
+    let buf = crate::read_bytes::<16>(reader).map_err(|e| {
+        Error::IoError(e, "header string")
+    })?;
     // if the provided bytes don't match the static HEADER_STRING,
     // we return early
     if buf != HEADER_STRING {
@@ -104,25 +105,15 @@ pub fn validate_header_string(bytes: &[u8]) -> Result<(), Error> {
         // so we again use `from_utf8_lossy` and then convert that into a string.
 
         return Err(Error::HeaderString(
-            String::from_utf8_lossy(bytes).to_string(),
+            String::from_utf8_lossy(&buf).to_string(),
         ));
     }
     Ok(())
 }
 
 /// Parse the page size bytes the header into a `PageSize`
-pub fn parse_page_size(bytes: &[u8]) -> Result<PageSize, Error> {
-    // first we try and covert the slice into an array. This returns a `Result`
-    // so we can use the `map_err` method on that to convert a possible error here
-    // into _our_ error. Doing it this way allows us to use the `?` operator at the
-    // end which will return early if this fails.
-    let page_size_bytes: [u8; 2] = bytes.try_into().map_err(|_| {
-        Error::InvalidPageSize(format!("expected a 2 byte slice, found: {:?}", bytes))
-    })?;
-    // Now we can convert the value into a `u16`
-    let raw_page_size = u16::from_be_bytes(page_size_bytes);
-    // lastly we are going to use the `try_into` method defined below
-    // to finish the job
+pub fn parse_page_size(reader: &mut impl Read) -> Result<PageSize, Error> {
+    let raw_page_size = crate::read_u16(reader, "page size")?;
     raw_page_size.try_into()
 }
 
@@ -169,7 +160,8 @@ impl TryFrom<u16> for PageSize {
 
 /// Validate one of the payload/leaf fractions. If byte doesn't match
 /// target will create an error with the provided name.
-fn validate_fraction(byte: u8, target: u8, name: &str) -> Result<(), Error> {
+fn validate_fraction(reader: &mut impl Read, target: u8, name: &'static str) -> Result<(), Error> {
+    let byte = crate::read_u8(reader, name)?;
     if byte != target {
         Err(Error::InvalidFraction(format!(
             "{} must be {}, found: {}",
@@ -180,7 +172,10 @@ fn validate_fraction(byte: u8, target: u8, name: &str) -> Result<(), Error> {
     }
 }
 
-fn validate_reserved_zeros(bytes: &[u8]) -> Result<(), Error> {
+fn validate_reserved_zeros(reader: &mut impl Read) -> Result<(), Error> {
+    let bytes = crate::read_bytes::<24>(reader).map_err(|e| {
+        Error::IoError(e, "reserved zeros")
+    })?;
     for (i, &byte) in bytes.iter().enumerate() {
         if byte != 0 {
             return Err(Error::UnexpectedNonZero(format!(

@@ -2,6 +2,7 @@
 name = "sqlite_parser"
 version = "0.1.0"
 authors = ["rmasen"]
-edition = "2018"
+# This is the value we need to update
+edition = "2021"
 
 [dependencies]
