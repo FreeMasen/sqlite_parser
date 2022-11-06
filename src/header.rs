@@ -61,14 +61,15 @@ pub fn parse_header(bytes: &[u8]) -> Result<DatabaseHeader, Error> {
     let schema_version = SchemaVersion::try_from(raw_schema_version)?;
     let cache_size = crate::try_parse_u32(&bytes[48..52], "cache size")?;
     let raw_vacuum = crate::try_parse_u32(&bytes[52..56], "auto vacuum")?;
-    let vacuum_setting = VacuumSetting::full(raw_vacuum);
     let raw_text_enc = crate::try_parse_u32(&bytes[56..60], "text encoding")?;
     let text_encoding = TextEncoding::try_from(raw_text_enc)?;
     let user_version = crate::try_parse_i32(&bytes[60..64], "user version")?;
-    let application_id = crate::try_parse_u32(&bytes[64..68], "application id")?;
-    validate_reserved_zeros(&bytes[68..92])
-        .map_err(|e| eprintln!("{}", e))
-        .ok();
+    let incremental_mode = crate::try_parse_u32(&bytes[64..68], "incremental vacuum?")?;
+    let vacuum_setting = VacuumSetting::new(raw_vacuum, incremental_mode);
+    let application_id = crate::try_parse_u32(&bytes[68..72], "application id")?;
+    validate_reserved_zeros(&bytes[72..92])
+    .map_err(|e| eprintln!("{}", e))
+    .ok();
     // new!
     let version_valid_for = crate::try_parse_u32(&bytes[92..96], "version valid for")?;
     let library_write_version = crate::try_parse_u32(&bytes[96..100], "library write version")?;
@@ -272,16 +273,23 @@ impl TryFrom<u32> for SchemaVersion {
 
 #[derive(Debug, Clone, Copy)]
 pub enum VacuumSetting {
-    /// Incremental vacuum is set to full
+    /// Vacuum Mode is set to full
     Full(NonZeroU32),
+    /// Vacuum Mode is set to incremental
+    Incremental(NonZeroU32),
 }
 
 impl VacuumSetting {
     /// A constructor that returns an optional
     /// VacuumSetting
-    pub fn full(v: u32) -> Option<Self> {
+    pub fn new(v: u32, is_incremental: u32) -> Option<Self> {
         let non_zero = NonZeroU32::new(v)?;
-        Some(VacuumSetting::Full(non_zero))
+        let ret = if is_incremental > 0 {
+            Self::Incremental(non_zero)
+        } else {
+            Self::Full(non_zero)
+        };
+        Some(ret)
     }
 }
 
