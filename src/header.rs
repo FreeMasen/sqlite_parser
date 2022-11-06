@@ -61,10 +61,11 @@ pub fn parse_header(reader: &mut impl Read) -> Result<DatabaseHeader, Error> {
     let schema_version = SchemaVersion::try_from(raw_schema_version)?;
     let cache_size = crate::read_u32(reader, "cache size")?;
     let raw_vacuum = crate::read_u32(reader, "auto vacuum")?;
-    let vacuum_setting = VacuumSetting::full(raw_vacuum);
     let raw_text_enc = crate::read_u32(reader, "text encoding")?;
     let text_encoding = TextEncoding::try_from(raw_text_enc)?;
     let user_version = crate::read_i32(reader, "user version")?;
+    let incremental_vacuum = crate::read_u32(reader, "incremental vacuum")?;
+    let vacuum_setting = VacuumSetting::new(raw_vacuum, incremental_vacuum);
     let application_id = crate::read_u32(reader, "application id")?;
     validate_reserved_zeros(reader)
         .map_err(|e| eprintln!("{}", e))
@@ -173,7 +174,7 @@ fn validate_fraction(reader: &mut impl Read, target: u8, name: &'static str) -> 
 }
 
 fn validate_reserved_zeros(reader: &mut impl Read) -> Result<(), Error> {
-    let bytes = crate::read_bytes::<24>(reader).map_err(|e| {
+    let bytes = crate::read_bytes::<20>(reader).map_err(|e| {
         Error::IoError(e, "reserved zeros")
     })?;
     for (i, &byte) in bytes.iter().enumerate() {
@@ -267,16 +268,23 @@ impl TryFrom<u32> for SchemaVersion {
 
 #[derive(Debug, Clone, Copy)]
 pub enum VacuumSetting {
-    /// Incremental vacuum is set to full
+    /// Vacuum Mode is set to full
     Full(NonZeroU32),
+    /// Vacuum Mode is set to incremental
+    Incremental(NonZeroU32),
 }
 
 impl VacuumSetting {
     /// A constructor that returns an optional
     /// VacuumSetting
-    pub fn full(v: u32) -> Option<Self> {
+    pub fn new(v: u32, is_incremental: u32) -> Option<Self> {
         let non_zero = NonZeroU32::new(v)?;
-        Some(VacuumSetting::Full(non_zero))
+        let ret = if is_incremental > 0 {
+            Self::Incremental(non_zero)
+        } else {
+            Self::Full(non_zero)
+        };
+        Some(ret)
     }
 }
 
